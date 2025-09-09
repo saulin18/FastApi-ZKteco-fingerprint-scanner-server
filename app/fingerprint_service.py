@@ -1,32 +1,26 @@
-import sys
-from libzkfpcsharp import *  # noqa: F403
+
 from io import BytesIO
 # Import configuration
 from config import LOG_LEVEL, LOG_FILE
-# Import pyzkfp components
-from pyzkfp._construct.errors_handler import *  # noqa: F403
-from pyzkfp._construct.zkfp import *  # noqa: F403
-import os
+
 import base64
 import logging
 from typing import Optional, Tuple
-from System import Array, Byte
-import clr
 
-# Add the DLL path to sys.path
-dir_path = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.join(dir_path, "..", "dll"))
-
-
+# pyzkfp includes its own DLL files, no need to add custom dll path
 
 try:
     from PIL import Image
 except ImportError:
     Image = None
 
-# Add references for .NET interop
-clr.AddReference("libzkfpcsharp")
-clr.AddReference("System")
+# Use pyzkfp directly as in the official example
+try:
+    from pyzkfp import ZKFP2
+    from pyzkfp._construct.errors_handler import *  # noqa: F403
+    from System import Array, Byte  # Import .NET types
+except ImportError:
+    raise ImportError("pyzkfp not found. Please install with: pip install pyzkfp")
 
 
 
@@ -47,8 +41,8 @@ class FingerprintService:
         fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         self.logger.addHandler(fh)
         
-        self.zkfp2 = zkfp2()  # noqa: F405
-        self._zkfp = zkfp()  # noqa: F405
+        # Use ZKFP2 directly as in the official example
+        self.zkfp2 = ZKFP2()
         self.devHandle: Optional[int] = None
         self.dbHandle: Optional[int] = None
         self.dev_serial_number: Optional[str] = None
@@ -92,8 +86,7 @@ class FingerprintService:
         """Initialize the fingerprint device"""
         try:
             # Initialize the SDK
-            ret = self.zkfp2.Init()
-            self._handle_error(ret)
+            self.zkfp2.Init()
             
             # Get device count
             device_count = self.zkfp2.GetDeviceCount()
@@ -105,14 +98,10 @@ class FingerprintService:
             # Open the first device
             self.devHandle = self.zkfp2.OpenDevice(0)
             
-            # Initialize zkfp for additional device info
-            self._zkfp.Initialize()
-            self._zkfp.OpenDevice(0)
-            
             # Get device information
-            self.dev_serial_number = self._zkfp.devSn
-            self.width = self._zkfp.imageWidth
-            self.height = self._zkfp.imageHeight
+            self.dev_serial_number = self.zkfp2.dev_serial_number
+            self.width = self.zkfp2.width
+            self.height = self.zkfp2.height
             
             # Initialize database
             self.dbHandle = self.zkfp2.DBInit()
@@ -167,19 +156,15 @@ class FingerprintService:
             raise DeviceNotInitializedError("Device not initialized")  # noqa: F405
         
         try:
-            imgBuffer = Array[Byte](self.width * self.height)
-            template = Array[Byte](1024 * 2)
-            size = template.Length
+            # Use ZKFP2's AcquireFingerprint method as in the example
+            capture = self.zkfp2.AcquireFingerprint()
             
-            ret, size = self.zkfp2.AcquireFingerprint(self.devHandle, imgBuffer, template, size)
-            
-            if ret == 0:  # Success
+            if capture:
+                template, img = capture
                 self.logger.info("Fingerprint captured successfully")
-                return template, bytes(imgBuffer)
-            elif ret == -8:  # No fingerprint detected
-                return None
+                return template, bytes(img)
             else:
-                self._handle_error(ret)
+                return None
                 
         except Exception as e:
             self.logger.error(f"Error capturing fingerprint: {str(e)}")
@@ -209,21 +194,13 @@ class FingerprintService:
 
     
     def image_to_base64(self, image_data: bytes) -> str:
-        """Convert image data to base64 string using SDK's Blob2Base64String method"""
+        """Convert image data to base64 string using ZKFP2's Blob2Base64String method"""
         try:
             if not isinstance(image_data, bytes):
                 image_data = bytes(image_data)
             
-            # Use SDK's built-in method for better compatibility
-            strBase64 = ""
-            ret, result = self.zkfp2.Blob2Base64String(image_data, len(image_data), strBase64)
-            
-            if ret == 0:
-                return result
-            else:
-                # Fallback to PIL method if SDK method fails
-                self.logger.warning("SDK Blob2Base64String failed, using PIL fallback")
-                return self._image_to_base64_pil(image_data)
+            # Use ZKFP2's built-in method for better compatibility
+            return self.zkfp2.Blob2Base64String(image_data)
                 
         except Exception as e:
             self.logger.error(f"Error converting image to base64: {str(e)}")
@@ -264,29 +241,9 @@ class FingerprintService:
         if not self._is_initialized:
             raise DeviceNotInitializedError("Device not initialized")  # noqa: F405
         
-        colors_translation = {"white": 101, "green": 102, "red": 103}
-        if color not in colors_translation:
-            raise ValueError(f"Invalid color: {color}. Use: white, green, or red")
-        
         try:
-            # Turn on light
-            param_value = self.int_to_byte_array(1)
-            ret = self._zkfp.SetParameters(colors_translation[color], param_value, len(param_value))
-            self._handle_error(ret)
-            
-            # Schedule light turn off
-            import threading
-            import time
-            
-            def turn_off_light():
-                time.sleep(duration)
-                param_value_off = self.int_to_byte_array(0)
-                try:
-                    self._zkfp.SetParameters(colors_translation[color], param_value_off, len(param_value_off))
-                except Exception:
-                    pass  # Ignore errors when turning off light
-            
-            threading.Thread(target=turn_off_light, daemon=True).start()
+            # Use ZKFP2's Light method as in the example
+            self.zkfp2.Light(color, duration)
             
         except Exception as e:
             self.logger.error(f"Error controlling light: {str(e)}")
